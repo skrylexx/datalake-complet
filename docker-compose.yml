@@ -1,0 +1,174 @@
+services:
+
+## Récupération des données
+  cloudbeaver:
+    image: dbeaver/cloudbeaver:latest
+    container_name: dbeaver
+    restart: always
+    ports:
+     - '8978:8978'
+    volumes:
+     - cloudbeaver:/opt/cloudbeaver/workspace
+    networks:
+     - datalake
+
+  kyuubi:
+    image: apache/kyuubi:latest
+    container_name: kyuubi
+    depends_on:
+      - spark-master
+    ports:
+      - "10009:10009"
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - KYUUBI_ENGINE_SHARE_LEVEL=CONNECTION
+    volumes:
+      - ./kyuubi.conf:/opt/kyuubi/conf/kyuubi.conf
+    command: ["/opt/kyuubi/bin/kyuubi", "start"]
+    networks:
+     - datalake
+
+## Traitement des données
+  spark-master:
+    image: bitnami/spark:latest
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    networks:
+     - datalake
+
+  spark-worker:
+    image: bitnami/spark:latest
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    ports:
+      - "8081:8081"
+    networks:
+     - datalake
+
+## Stockage des métadonnées
+  postgres:
+    image: postgres:latest
+    container_name: postgres-metastore
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: metadata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+    networks:
+     - datalake
+
+## Stockage des données
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: server /data
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9000:9000"
+    volumes:
+      - minio_data:/data
+    restart: always
+    networks:
+     - datalake
+
+## Trino pour formater les données avant stockage MinIO
+  trino:
+    image: trinodb/trino
+    container_name: trino
+    depends_on:
+      - minio
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./config/trino:/etc/trino
+    networks:
+     - datalake
+
+## Récolte & visualisation Métadonnées (PostgreSQL) - Accès admin
+  fastapi-postgres:
+    build: ./services/fastapi-postgres
+    container_name: fastapi-postgres
+    depends_on:
+      - postgres
+    environment:
+      - DATABASE_URL=postgresql://admin:admin@postgres:5432/metadata
+    ports:
+      - "8001:8000"
+    restart: always
+    networks:
+     - datalake
+
+  htmx-postgres:
+    build: ./services/htmx-postgres
+    container_name: htmx-postgres
+    depends_on:
+      - fastapi-postgres
+    ports:
+      - "8501:80"
+    restart: always
+    networks:
+     - datalake
+
+## Récolte & visualisation données (MinIO) - Accès ouvert
+  fastapi-minio:
+    build: ./services/fastapi-minio
+    container_name: fastapi-minio
+    depends_on:
+      - minio
+      - superset
+    environment:
+      - MINIO_URL=http://minio:9000
+      - SUPERSET_URL=http://superset:8088
+    ports:
+      - "8002:8000"
+    restart: always
+    networks:
+     - datalake
+
+  superset:
+    build: ./services/superset
+    container_name: superset
+    depends_on:
+      - minio
+    environment:
+      - SUPERSET_DATABASE_URL=sqlite:////app/superset.db
+    ports:
+      - "8088:8088"
+    restart: always
+    networks:
+     - datalake
+
+  htmx-minio:
+    build: ./services/htmx-minio
+    container_name: htmx-minio
+    depends_on:
+      - fastapi-minio
+    ports:
+      - "8502:80"
+    restart: always
+    networks:
+     - datalake
+
+
+networks:
+  datalake:
+    external: true
+
+volumes:
+  cloudbeaver:
+  postgres_data:
+  minio_data:
