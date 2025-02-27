@@ -6,24 +6,24 @@ services:
     container_name: dbeaver
     restart: always
     ports:
-     - '8978:8978'
+     - ${DBEAVER_S_PORT}:${DBEAVER_S_PORT}
     volumes:
      - cloudbeaver:/opt/cloudbeaver/workspace
     networks:
      - datalake
 
   kyuubi:
-    image: apache/kyuubi:latest
+    image: apache/kyuubi:1.7.0
     container_name: kyuubi
     depends_on:
       - spark-master
     ports:
-      - "10009:10009"
+      - ${KYUUBI_S_PORT}:${KYUUBI_D_PORT}
     environment:
-      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_MASTER=spark://spark-master:${SPARK_M_S_PORT_COMM}
       - KYUUBI_ENGINE_SHARE_LEVEL=CONNECTION
     volumes:
-      - ./kyuubi.conf:/opt/kyuubi/conf/kyuubi.conf
+      - ./kyuubi/kyuubi.conf:/opt/kyuubi/conf/kyuubi.conf
     command: ["/opt/kyuubi/bin/kyuubi", "start"]
     networks:
      - datalake
@@ -35,8 +35,8 @@ services:
     environment:
       - SPARK_MODE=master
     ports:
-      - "8080:8080"
-      - "7077:7077"
+      - ${SPARK_M_S_PORT_WEB}:${SPARK_M_D_PORT_WEB}
+      - ${SPARK_M_S_PORT_COMM}:${SPARK_M_D_PORT_COMM}
     networks:
      - datalake
 
@@ -47,9 +47,9 @@ services:
       - spark-master
     environment:
       - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_MASTER_URL=spark://spark-master:${SPARK_M_S_PORT_COMM}
     ports:
-      - "8081:8081"
+      - ${SPARK_W_S_PORT}:${SPARK_W_D_PORT}
     networks:
      - datalake
 
@@ -58,11 +58,11 @@ services:
     image: postgres:latest
     container_name: postgres-metastore
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: metadata
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
     ports:
-      - "5432:5432"
+      - ${PG_S_PORT}:${PG_D_PORT}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: always
@@ -75,10 +75,10 @@ services:
     container_name: minio
     command: server /data
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     ports:
-      - "9000:9000"
+      - ${MINIO_S_PORT}:${MINIO_D_PORT}
     volumes:
       - minio_data:/data
     restart: always
@@ -92,7 +92,7 @@ services:
     depends_on:
       - minio
     ports:
-      - "8082:8080"
+      - ${TRINO_S_PORT}:${TRINO_D_PORT}
     volumes:
       - ./config/trino:/etc/trino
     networks:
@@ -100,65 +100,65 @@ services:
 
 ## Récolte & visualisation Métadonnées (PostgreSQL) - Accès admin
   fastapi-postgres:
-    build: ./services/fastapi-postgres
+    build: ./builds/fastapi-postgres
     container_name: fastapi-postgres
     depends_on:
       - postgres
     environment:
-      - DATABASE_URL=postgresql://admin:admin@postgres:5432/metadata
+      - DATABASE_URL=postgresql://${PG_USER}:${PG_PASSWORD}@postgres:${PG_S_PORT}/${PG_DB}
     ports:
-      - "8001:8000"
+      - ${FASTAPI_PG_S_PORT}:${FASTAPI_PG_D_PORT}
     restart: always
     networks:
      - datalake
 
   htmx-postgres:
-    build: ./services/htmx-postgres
+    build: ./builds/htmx-postgres
     container_name: htmx-postgres
     depends_on:
       - fastapi-postgres
     ports:
-      - "8501:80"
+      - ${HTMX_PG_S_PORT}:${HTMX_PG_D_PORT}
     restart: always
     networks:
      - datalake
 
 ## Récolte & visualisation données (MinIO) - Accès ouvert
   fastapi-minio:
-    build: ./services/fastapi-minio
+    build: ./builds/fastapi-minio
     container_name: fastapi-minio
     depends_on:
       - minio
       - superset
     environment:
-      - MINIO_URL=http://minio:9000
-      - SUPERSET_URL=http://superset:8088
+      - MINIO_URL=http://minio:${MINIO_S_PORT}
+      - SUPERSET_URL=http://superset:${SUPERSET_S_PORT}
     ports:
-      - "8002:8000"
+      - ${FASTAPI_MINIO_S_PORT}:${FASTAPI_MINIO_D_PORT}
     restart: always
     networks:
      - datalake
 
   superset:
-    build: ./services/superset
+    build: ./builds/superset
     container_name: superset
     depends_on:
       - minio
     environment:
       - SUPERSET_DATABASE_URL=sqlite:////app/superset.db
     ports:
-      - "8088:8088"
+      - ${SUPERSET_S_PORT}:${SUPERSET_D_PORT}
     restart: always
     networks:
      - datalake
 
   htmx-minio:
-    build: ./services/htmx-minio
+    build: ./builds/htmx-minio
     container_name: htmx-minio
     depends_on:
       - fastapi-minio
     ports:
-      - "8502:80"
+      - ${HTMX_MINIO_S_PORT}:${HTMX_MINIO_D_PORT}
     restart: always
     networks:
      - datalake
